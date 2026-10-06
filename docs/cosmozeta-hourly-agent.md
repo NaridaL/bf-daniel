@@ -21,7 +21,7 @@ The prompt explicitly prohibits attacks, player messaging, alliance changes, mar
 
 Only non-secret progress state is restored and saved with `actions/cache`. Each run saves an immutable, unique cache key and restores the newest key sharing a stable prefix. Browser authentication, cookies, browser profiles, Copilot home data, passwords, and tokens are never cached. The state file records a UTC timestamp, observation, action, active queue/end time, and suggested next action. State and usage JSON are also retained as a diagnostic artifact for three days.
 
-Copilot uses the `auto` model with the `efficiency` tier, default context, low reasoning, one autopilot continuation, and `--max-ai-credits 30`. Thirty is currently the minimum accepted AI-credit limit. It is a soft session credit cap, not a strict token cap, so actual billing and token usage should still be monitored in the uploaded usage JSON.
+Copilot uses the `auto` model with the `efficiency` tier, default context, one autopilot continuation, and `--max-ai-credits 30`. Auto routing selects the model and its reasoning behavior, so the workflow does not pass an incompatible explicit reasoning-effort setting. Thirty is currently the minimum accepted AI-credit limit. It is a soft session credit cap, not a strict token cap, so actual billing and token usage should still be monitored in the uploaded usage JSON.
 
 ## Schedule and manual testing
 
