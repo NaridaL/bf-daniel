@@ -74,65 +74,106 @@ jobs:
             --idle-timeout 600000 >/dev/null
 
           login_script="$(mktemp "${RUNNER_TEMP}/cosmozeta-login-XXXXXX.js")"
+          login_result="$(mktemp "${RUNNER_TEMP}/cosmozeta-login-result-XXXXXX.json")"
           remove_login_script() {
-            rm -f "${login_script}"
+            rm -f "${login_script}" "${login_result}"
           }
           trap remove_login_script EXIT
 
-          cat > "${login_script}" <<'EOF'
-          async (page) => {
-            const email = process.env.COSMOZETA_EMAIL;
-            const password = process.env.COSMOZETA_PASSWORD;
-            if (!email || !password) {
-              throw new Error("CosmoZeta credentials are not configured");
-            }
+          node - "${login_script}" <<'NODE'
+          const fs = require("node:fs");
 
-            await page.waitForLoadState("domcontentloaded");
-
-            const loginEntry = page
-              .getByRole("link", { name: /log\s*in|sign\s*in/i })
-              .or(page.getByRole("button", { name: /log\s*in|sign\s*in/i }))
-              .first();
-            if (await loginEntry.isVisible().catch(() => false)) {
-              await loginEntry.click();
-            }
-
-            const emailInput = page
-              .getByLabel(/e-?mail/i)
-              .or(page.getByPlaceholder(/e-?mail/i))
-              .or(page.getByRole("textbox", { name: /e-?mail/i }))
-              .first();
-            const passwordInput = page
-              .getByLabel(/password/i)
-              .or(page.getByPlaceholder(/password/i))
-              .first();
-
-            await emailInput.waitFor({ state: "visible", timeout: 30000 });
-            await emailInput.fill(email);
-            await passwordInput.fill(password);
-
-            await page
-              .getByRole("button", {
-                name: /log\s*in|sign\s*in|enter(?:\s+game)?/i,
-              })
-              .first()
-              .click();
-
-            await page.waitForURL(
-              (url) => url.pathname === "/app" || url.pathname.startsWith("/app/"),
-              { timeout: 30000 },
-            );
-
-            const path = new URL(page.url()).pathname;
-            if (path !== "/app" && !path.startsWith("/app/")) {
-              throw new Error("CosmoZeta login did not reach /app/");
-            }
+          const email = process.env.COSMOZETA_EMAIL;
+          const password = process.env.COSMOZETA_PASSWORD;
+          if (!email || !password) {
+            throw new Error("CosmoZeta credentials are not configured");
           }
-          EOF
 
-          if ! playwright-cli -s="${PLAYWRIGHT_SESSION}" run-code \
-            --filename "${login_script}" >/dev/null 2>&1; then
-            echo "::error::CosmoZeta login failed or did not reach /app/."
+          const source = `async (page) => {
+            let stage = "waiting for the login form";
+            try {
+              const email = ${JSON.stringify(email)};
+              const password = ${JSON.stringify(password)};
+
+              await page.waitForLoadState("domcontentloaded");
+
+              const emailInput = page
+                .getByLabel(/e-?mail/i)
+                .or(page.getByPlaceholder(/e-?mail/i))
+                .or(page.getByRole("textbox", { name: /e-?mail/i }))
+                .first();
+              const passwordInput = page
+                .getByLabel(/password/i)
+                .or(page.getByPlaceholder(/password/i))
+                .first();
+
+              await emailInput.waitFor({ state: "visible", timeout: 30000 });
+              await passwordInput.waitFor({ state: "visible", timeout: 30000 });
+
+              stage = "filling the login form";
+              await emailInput.fill(email);
+              await passwordInput.fill(password);
+
+              stage = "submitting the login form";
+              const loginForm = page.locator("form").filter({ has: emailInput }).first();
+              await loginForm
+                .getByRole("button", {
+                  name: /log in|login|sign in|enter game/i,
+                })
+                .click();
+
+              stage = "waiting for /app/";
+              await page.waitForURL(
+                (url) =>
+                  url.pathname === "/app" || url.pathname.startsWith("/app/"),
+                { timeout: 30000 },
+              );
+
+              const path = new URL(page.url()).pathname;
+              return { ok: true, stage: "complete", path };
+            } catch {
+              return {
+                ok: false,
+                stage,
+                path: new URL(page.url()).pathname,
+              };
+            }
+          }`;
+
+          fs.writeFileSync(process.argv[2], source, { mode: 0o600 });
+          NODE
+
+          if ! playwright-cli -s="${PLAYWRIGHT_SESSION}" --raw run-code \
+            --filename "${login_script}" >"${login_result}" 2>/dev/null; then
+            echo "::error::CosmoZeta login script could not be executed."
+            exit 1
+          fi
+
+          if ! LOGIN_RESULT="${login_result}" node <<'NODE'
+          const fs = require("node:fs");
+
+          let result;
+          try {
+            result = JSON.parse(fs.readFileSync(process.env.LOGIN_RESULT, "utf8"));
+          } catch {
+            console.error("::error::CosmoZeta login returned an invalid result.");
+            process.exit(1);
+          }
+
+          if (!result.ok) {
+            const stage = String(result.stage || "an unknown stage")
+              .replace(/[\r\n]/g, "")
+              .slice(0, 100);
+            const path = String(result.path || "unknown")
+              .replace(/[\r\n]/g, "")
+              .slice(0, 200);
+            console.error(
+              `::error::CosmoZeta login failed while ${stage}; current path: ${path}`,
+            );
+            process.exit(1);
+          }
+          NODE
+          then
             exit 1
           fi
 

@@ -7,9 +7,9 @@ The `CosmoZeta hourly agent` workflow runs at minute 17 of each hour and can als
 - `COSMOZETA_EMAIL`: CosmoZeta account email.
 - `COSMOZETA_PASSWORD`: CosmoZeta account password.
 
-The workflow grants `copilot-requests: write` and authenticates Copilot CLI with the built-in Actions `GITHUB_TOKEN`, so no Copilot PAT or additional authentication secret is required. The owning organization must allow Copilot CLI usage billed to the organization.
+The workflow authenticates Copilot CLI with the built-in Actions `GITHUB_TOKEN`, so it does not store a Copilot PAT. This requires the repository owner's Copilot entitlement to support Actions authentication.
 
-CosmoZeta credentials are provided only to the login step and are not written to scripts, logs, caches, artifacts, or agent state. The generated login script is created with restrictive permissions, its output is suppressed, and it is deleted immediately after use.
+CosmoZeta credentials are provided only to the login step. They are JSON-escaped into a runner-temporary login script with restrictive permissions because Playwright CLI executes `run-code` without access to Node environment variables. The script output is suppressed, and the script is deleted immediately after use. Credentials are never written to logs, caches, artifacts, or agent state.
 
 ## Behavior and safety
 
@@ -29,7 +29,7 @@ Scheduled GitHub Actions runs can start later than the cron time during periods 
 
 To test without waiting for the schedule:
 
-1. Confirm the organization allows Copilot CLI usage billed to the organization, then configure both CosmoZeta repository secrets.
+1. Configure both CosmoZeta repository secrets and confirm the repository owner's Copilot entitlement supports Actions authentication.
 2. Open **Actions > CosmoZeta hourly agent**.
 3. Select **Run workflow** on the default branch.
 4. Review the run summary and the short-retention `cosmozeta-run-*` artifact.
