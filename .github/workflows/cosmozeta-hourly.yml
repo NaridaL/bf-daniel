@@ -1,0 +1,203 @@
+name: CosmoZeta hourly agent
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  copilot-requests: write
+
+concurrency:
+  group: cosmozeta-game-session
+  cancel-in-progress: false
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PLAYWRIGHT_SESSION: cosmozeta
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install browser agent tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global @playwright/cli@latest @github/copilot@latest
+          playwright-cli install-browser chrome --with-deps
+
+      - name: Restore agent progress state
+        id: restore-state
+        uses: actions/cache/restore@v4
+        with:
+          path: .cosmozeta-state
+          key: cosmozeta-state-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cosmozeta-state-${{ runner.os }}-
+
+      - name: Initialize agent progress state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .cosmozeta-state .cosmozeta-artifacts
+          if [[ ! -f .cosmozeta-state/state.md ]]; then
+            cat > .cosmozeta-state/state.md <<'EOF'
+          # CosmoZeta agent state
+
+          No prior run has been recorded.
+          EOF
+          fi
+
+      - name: Start Chrome and log in
+        shell: bash
+        env:
+          COSMOZETA_EMAIL: ${{ secrets.COSMOZETA_EMAIL }}
+          COSMOZETA_PASSWORD: ${{ secrets.COSMOZETA_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          playwright-cli -s="${PLAYWRIGHT_SESSION}" open \
+            "https://www.cosmozeta.com/?preview-cz-insider" \
+            --browser chrome \
+            --idle-timeout 600000 >/dev/null
+
+          login_script="$(mktemp "${RUNNER_TEMP}/cosmozeta-login-XXXXXX.js")"
+          remove_login_script() {
+            rm -f "${login_script}"
+          }
+          trap remove_login_script EXIT
+
+          cat > "${login_script}" <<'EOF'
+          async (page) => {
+            const email = process.env.COSMOZETA_EMAIL;
+            const password = process.env.COSMOZETA_PASSWORD;
+            if (!email || !password) {
+              throw new Error("CosmoZeta credentials are not configured");
+            }
+
+            await page.waitForLoadState("domcontentloaded");
+
+            const loginEntry = page
+              .getByRole("link", { name: /log\s*in|sign\s*in/i })
+              .or(page.getByRole("button", { name: /log\s*in|sign\s*in/i }))
+              .first();
+            if (await loginEntry.isVisible().catch(() => false)) {
+              await loginEntry.click();
+            }
+
+            const emailInput = page
+              .getByLabel(/e-?mail/i)
+              .or(page.getByPlaceholder(/e-?mail/i))
+              .or(page.getByRole("textbox", { name: /e-?mail/i }))
+              .first();
+            const passwordInput = page
+              .getByLabel(/password/i)
+              .or(page.getByPlaceholder(/password/i))
+              .first();
+
+            await emailInput.waitFor({ state: "visible", timeout: 30000 });
+            await emailInput.fill(email);
+            await passwordInput.fill(password);
+
+            await page
+              .getByRole("button", {
+                name: /log\s*in|sign\s*in|enter(?:\s+game)?/i,
+              })
+              .first()
+              .click();
+
+            await page.waitForURL(
+              (url) => url.pathname === "/app" || url.pathname.startsWith("/app/"),
+              { timeout: 30000 },
+            );
+
+            const path = new URL(page.url()).pathname;
+            if (path !== "/app" && !path.startsWith("/app/")) {
+              throw new Error("CosmoZeta login did not reach /app/");
+            }
+          }
+          EOF
+
+          if ! playwright-cli -s="${PLAYWRIGHT_SESSION}" run-code \
+            --filename "${login_script}" >/dev/null 2>&1; then
+            echo "::error::CosmoZeta login failed or did not reach /app/."
+            exit 1
+          fi
+
+          remove_login_script
+          trap - EXIT
+
+      - name: Make one safe progress action
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          prompt="$(cat <<'EOF'
+          Operate the already-authenticated CosmoZeta browser using only shell commands whose executable is exactly `playwright-cli -s=cosmozeta`. Read `.cosmozeta-state/state.md` first. Inspect only enough of the current game state to make at most one safe, modest forward-progress action; do not perform deep strategy analysis.
+
+          First determine whether the prior state records an active queued task and whether it is still running. If it has completed, prioritize collecting it or completing that same progression chain. Otherwise make one modest safe progression action, such as advancing a resource, building, research, ship progression, or scanning task.
+
+          Never attack, message another player, join or change an alliance, trade on a marketplace, spend premium currency, change account or settings, cancel or destroy anything, expose secrets, or take any action with uncertain consequences. Exit without acting if the page state, cost, target, or safety is uncertain.
+
+          After acting, or after deciding safely not to act, overwrite `.cosmozeta-state/state.md` with only non-secret progress information: a UTC timestamp, concise observation, action taken (or "none" and why), any active queue and known end time, and one suggested next action. Do not save credentials, tokens, cookies, browser storage, personal data, or copied page content.
+          EOF
+          )"
+
+          copilot -p "${prompt}" \
+            --autopilot \
+            --model auto \
+            --auto-tier efficiency \
+            --reasoning-effort low \
+            --context default \
+            --max-ai-credits 30 \
+            --max-autopilot-continues 1 \
+            --no-ask-user \
+            --disable-builtin-mcps \
+            --no-custom-instructions \
+            --no-auto-update \
+            --no-experimental \
+            --no-remote \
+            --no-remote-export \
+            --allow-tool='shell(playwright-cli:*)' \
+            --allow-tool='write(.cosmozeta-state/state.md)' \
+            --secret-env-vars=GITHUB_TOKEN \
+            --usage-output-file .cosmozeta-artifacts/usage.json
+
+      - name: Close Playwright session
+        if: always()
+        shell: bash
+        run: |
+          playwright-cli -s="${PLAYWRIGHT_SESSION}" close >/dev/null 2>&1 || true
+
+      - name: Save updated agent progress state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cosmozeta-state
+          key: cosmozeta-state-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload run diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmozeta-run-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .cosmozeta-state/state.md
+            .cosmozeta-artifacts/usage.json
+          if-no-files-found: warn
+          retention-days: 3
