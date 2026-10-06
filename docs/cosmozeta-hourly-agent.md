@@ -13,7 +13,7 @@ CosmoZeta credentials are provided only to the login step. They are JSON-escaped
 
 ## Behavior and safety
 
-The agent first reads `.cosmozeta-state/state.md`. It checks whether a previously recorded queue is still active, prioritizes collecting or completing that progression chain when appropriate, and otherwise makes at most one modest resource, building, research, ship-progression, or scanning action. It exits without acting whenever the page state, cost, target, or safety is uncertain.
+The agent first reads `.cosmozeta-state/state.md`, treats it as a hint, and verifies recorded queues against the live UI. Before any progression click, it must confirm all displayed costs against current resource balances, an available queue, and an enabled action control. After clicking, it must confirm a matching live queue/status/level change, resource deduction, or success message. A rejected or unconfirmed click is recorded as no action and is not retried during that run.
 
 The prompt explicitly prohibits attacks, player messaging, alliance changes, marketplace trades, premium-currency spending, account or settings changes, destructive actions, cancellations, and secret exposure. Built-in MCPs and repository custom instructions are disabled. Noninteractive permissions approve Playwright CLI commands and updates to the single state file only.
 
