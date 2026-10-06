@@ -189,13 +189,17 @@ jobs:
           set -euo pipefail
 
           prompt="$(cat <<'EOF'
-          Operate the already-authenticated CosmoZeta browser using only shell commands whose executable is exactly `playwright-cli -s=cosmozeta`. Read `.cosmozeta-state/state.md` first. Inspect only enough of the current game state to make at most one safe, modest forward-progress action; do not perform deep strategy analysis.
+          Operate the already-authenticated CosmoZeta browser using only shell commands whose executable is exactly `playwright-cli -s=cosmozeta`. Read `.cosmozeta-state/state.md` first, but treat it only as a hint and verify every recorded queue against the live UI. Inspect only enough to make at most one safe, modest forward-progress action; prefer `find` or targeted inspection over repeated full snapshots and do not perform deep strategy analysis.
 
-          First determine whether the prior state records an active queued task and whether it is still running. If it has completed, prioritize collecting it or completing that same progression chain. Otherwise make one modest safe progression action, such as advancing a resource, building, research, ship progression, or scanning task.
+          First determine whether a recorded queued task is actually present and still running. If it completed, prioritize collecting it or completing that same progression chain. If the live UI contradicts state.md, trust the UI and mark the old state stale. Otherwise consider one modest safe progression action, such as advancing a resource, building, research, ship progression, or scanning task.
+
+          Before clicking a progression action, inspect a fresh view of that exact option. Confirm every displayed resource cost and current balance numerically, confirm every balance is at least its corresponding cost, confirm the relevant queue is available, and confirm the action control is enabled. Do not click if any cost or balance is missing or ambiguous, or if the UI says insufficient resources, unavailable, locked, disabled, or queue full.
 
           Never attack, message another player, join or change an alliance, trade on a marketplace, spend premium currency, change account or settings, cancel or destroy anything, expose secrets, or take any action with uncertain consequences. Exit without acting if the page state, cost, target, or safety is uncertain.
 
-          After acting, or after deciding safely not to act, overwrite `.cosmozeta-state/state.md` with only non-secret progress information: a UTC timestamp, concise observation, action taken (or "none" and why), any active queue and known end time, and one suggested next action. Do not save credentials, tokens, cookies, browser storage, personal data, or copied page content.
+          After clicking, immediately inspect the live UI again. A click alone is never proof of success. Record an action as successful only when the UI explicitly confirms the matching queue/status/level change, resource deduction, or success message. If an error appears, resources are insufficient, the UI is unchanged, or no matching queue appears, do not try a different action; record the action as "none" with the rejected attempt and reason. Never invent or estimate an end time that the UI does not display.
+
+          After acting, or after deciding safely not to act, overwrite `.cosmozeta-state/state.md` with only non-secret progress information: a UTC timestamp, concise verified observation, confirmed action taken (or "none" and why), any live active queue and displayed end time, and one suggested next action. Do not save credentials, tokens, cookies, browser storage, personal data, or copied page content.
           EOF
           )"
 
