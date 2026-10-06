@@ -69,7 +69,7 @@ jobs:
           umask 077
 
           playwright-cli -s="${PLAYWRIGHT_SESSION}" open \
-            "https://www.cosmozeta.com/?preview-cz-insider" \
+            "https://www.cosmozeta.com/?preview=cz-insider" \
             --browser chrome \
             --idle-timeout 600000 >/dev/null
 
