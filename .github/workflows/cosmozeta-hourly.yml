@@ -203,7 +203,6 @@ jobs:
             --autopilot \
             --model auto \
             --auto-tier efficiency \
-            --reasoning-effort low \
             --context default \
             --max-ai-credits 30 \
             --max-autopilot-continues 1 \
