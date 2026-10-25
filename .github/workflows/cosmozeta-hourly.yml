@@ -103,8 +103,7 @@ jobs:
             --no-custom-instructions \
             --no-auto-update \
             --no-experimental \
-            --no-remote \
-            --no-remote-export \
+            --sync-session=off \
             --allow-tool='shell(playwright-cli:*)' \
             --allow-tool='write(.cosmozeta-state/state.md)' \
             --secret-env-vars=GITHUB_TOKEN \

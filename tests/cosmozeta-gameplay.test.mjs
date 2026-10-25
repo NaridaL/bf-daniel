@@ -5,6 +5,11 @@ import { readFileSync } from "node:fs";
 const prompt = readFileSync(new URL("../docs/cosmozeta-gameplay-prompt.md", import.meta.url), "utf8");
 const workflow = readFileSync(new URL("../.github/workflows/cosmozeta-hourly.yml", import.meta.url), "utf8");
 
+test("workflow avoids removed remote flags and disables account history sync", () => {
+  assert.doesNotMatch(workflow, /--no-remote(?:-export)?\b/);
+  assert.match(workflow, /--sync-session=off/);
+});
+
 test("workflow uses the versioned gameplay prompt, not a stale inline one-click policy", () => {
   assert.match(workflow, /prompt="\$\(cat docs\/cosmozeta-gameplay-prompt\.md\)"/);
   assert.doesNotMatch(workflow, /Make one safe progress action|at most one safe|Never attack|do not try a different action/);
