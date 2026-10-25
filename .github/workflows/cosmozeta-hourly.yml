@@ -16,7 +16,7 @@ concurrency:
 jobs:
   play:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     env:
       PLAYWRIGHT_SESSION: cosmozeta
 
@@ -37,6 +37,9 @@ jobs:
           set -euo pipefail
           npm install --global @playwright/cli@latest @github/copilot@latest
           playwright-cli install-browser chrome --with-deps
+
+      - name: Test email-code authentication logic
+        run: node --test tests/*.test.mjs
 
       - name: Restore agent progress state
         id: restore-state
@@ -64,144 +67,29 @@ jobs:
         shell: bash
         env:
           COSMOZETA_EMAIL: ${{ secrets.COSMOZETA_EMAIL }}
-          COSMOZETA_PASSWORD: ${{ secrets.COSMOZETA_PASSWORD }}
+          AGENTMAIL_API_KEY: ${{ secrets.AGENTMAIL_API_KEY }}
+          AGENTMAIL_INBOX: adrian-1479@agentmail.to
         run: |
           set -euo pipefail
           umask 077
 
-          playwright-cli -s="${PLAYWRIGHT_SESSION}" open \
+          env -u AGENTMAIL_API_KEY -u COSMOZETA_EMAIL \
+            playwright-cli -s="${PLAYWRIGHT_SESSION}" open \
             "https://www.cosmozeta.com/?preview=cz-insider" \
             --browser chrome \
             --idle-timeout 600000 >/dev/null
 
-          login_script="$(mktemp "${RUNNER_TEMP}/cosmozeta-login-XXXXXX.js")"
-          login_result="$(mktemp "${RUNNER_TEMP}/cosmozeta-login-result-XXXXXX.json")"
-          remove_login_script() {
-            rm -f "${login_script}" "${login_result}"
-          }
-          trap remove_login_script EXIT
+          node scripts/cosmozeta-login.mjs
 
-          node - "${login_script}" <<'NODE'
-          const fs = require("node:fs");
-
-          const email = process.env.COSMOZETA_EMAIL;
-          const password = process.env.COSMOZETA_PASSWORD;
-          if (!email || !password) {
-            throw new Error("CosmoZeta credentials are not configured");
-          }
-
-          const source = `async (page) => {
-            let stage = "waiting for the login form";
-            try {
-              const email = ${JSON.stringify(email)};
-              const password = ${JSON.stringify(password)};
-
-              await page.waitForLoadState("domcontentloaded");
-
-              const emailInput = page
-                .getByLabel(/e-?mail/i)
-                .or(page.getByPlaceholder(/e-?mail/i))
-                .or(page.getByRole("textbox", { name: /e-?mail/i }))
-                .first();
-              const passwordInput = page
-                .getByLabel(/password/i)
-                .or(page.getByPlaceholder(/password/i))
-                .first();
-
-              await emailInput.waitFor({ state: "visible", timeout: 30000 });
-              await passwordInput.waitFor({ state: "visible", timeout: 30000 });
-
-              stage = "filling the login form";
-              await emailInput.fill(email);
-              await passwordInput.fill(password);
-
-              stage = "submitting the login form";
-              const loginForm = page.locator("form").filter({ has: emailInput }).first();
-              await loginForm
-                .getByRole("button", {
-                  name: /log in|login|sign in|enter game/i,
-                })
-                .click();
-
-              stage = "waiting for /app/";
-              await page.waitForURL(
-                (url) =>
-                  url.pathname === "/app" || url.pathname.startsWith("/app/"),
-                { timeout: 30000 },
-              );
-
-              const path = new URL(page.url()).pathname;
-              return { ok: true, stage: "complete", path };
-            } catch {
-              return {
-                ok: false,
-                stage,
-                path: new URL(page.url()).pathname,
-              };
-            }
-          }`;
-
-          fs.writeFileSync(process.argv[2], source, { mode: 0o600 });
-          NODE
-
-          if ! playwright-cli -s="${PLAYWRIGHT_SESSION}" --raw run-code \
-            --filename "${login_script}" >"${login_result}" 2>/dev/null; then
-            echo "::error::CosmoZeta login script could not be executed."
-            exit 1
-          fi
-
-          if ! LOGIN_RESULT="${login_result}" node <<'NODE'
-          const fs = require("node:fs");
-
-          let result;
-          try {
-            result = JSON.parse(fs.readFileSync(process.env.LOGIN_RESULT, "utf8"));
-          } catch {
-            console.error("::error::CosmoZeta login returned an invalid result.");
-            process.exit(1);
-          }
-
-          if (!result.ok) {
-            const stage = String(result.stage || "an unknown stage")
-              .replace(/[\r\n]/g, "")
-              .slice(0, 100);
-            const path = String(result.path || "unknown")
-              .replace(/[\r\n]/g, "")
-              .slice(0, 200);
-            console.error(
-              `::error::CosmoZeta login failed while ${stage}; current path: ${path}`,
-            );
-            process.exit(1);
-          }
-          NODE
-          then
-            exit 1
-          fi
-
-          remove_login_script
-          trap - EXIT
-
-      - name: Make one safe progress action
+      - name: Progress the empire until useful actions are exhausted
+        timeout-minutes: 20
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          prompt="$(cat <<'EOF'
-          Operate the already-authenticated CosmoZeta browser using only shell commands whose executable is exactly `playwright-cli -s=cosmozeta`. Read `.cosmozeta-state/state.md` first, but treat it only as a hint and verify every recorded queue against the live UI. Inspect only enough to make at most one safe, modest forward-progress action; prefer `find` or targeted inspection over repeated full snapshots and do not perform deep strategy analysis.
-
-          First determine whether a recorded queued task is actually present and still running. If it completed, prioritize collecting it or completing that same progression chain. If the live UI contradicts state.md, trust the UI and mark the old state stale. Otherwise consider one modest safe progression action, such as advancing a resource, building, research, ship progression, or scanning task.
-
-          Before clicking a progression action, inspect a fresh view of that exact option. Confirm every displayed resource cost and current balance numerically, confirm every balance is at least its corresponding cost, confirm the relevant queue is available, and confirm the action control is enabled. Do not click if any cost or balance is missing or ambiguous, or if the UI says insufficient resources, unavailable, locked, disabled, or queue full.
-
-          Never attack, message another player, join or change an alliance, trade on a marketplace, spend premium currency, change account or settings, cancel or destroy anything, expose secrets, or take any action with uncertain consequences. Exit without acting if the page state, cost, target, or safety is uncertain.
-
-          After clicking, immediately inspect the live UI again. A click alone is never proof of success. Record an action as successful only when the UI explicitly confirms the matching queue/status/level change, resource deduction, or success message. If an error appears, resources are insufficient, the UI is unchanged, or no matching queue appears, do not try a different action; record the action as "none" with the rejected attempt and reason. Never invent or estimate an end time that the UI does not display.
-
-          After acting, or after deciding safely not to act, overwrite `.cosmozeta-state/state.md` with only non-secret progress information: a UTC timestamp, concise verified observation, confirmed action taken (or "none" and why), any live active queue and displayed end time, and one suggested next action. Do not save credentials, tokens, cookies, browser storage, personal data, or copied page content.
-          EOF
-          )"
+          prompt="$(cat docs/cosmozeta-gameplay-prompt.md)"
 
           copilot -p "${prompt}" \
             --autopilot \
@@ -209,7 +97,7 @@ jobs:
             --auto-tier efficiency \
             --context default \
             --max-ai-credits 30 \
-            --max-autopilot-continues 1 \
+            --max-autopilot-continues 12 \
             --no-ask-user \
             --disable-builtin-mcps \
             --no-custom-instructions \
@@ -221,6 +109,14 @@ jobs:
             --allow-tool='write(.cosmozeta-state/state.md)' \
             --secret-env-vars=GITHUB_TOKEN \
             --usage-output-file .cosmozeta-artifacts/usage.json
+
+      - name: Publish progress summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .cosmozeta-state/state.md ]]; then
+            cat .cosmozeta-state/state.md >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Close Playwright session
         if: always()
