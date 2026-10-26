@@ -16,6 +16,15 @@ test("workflow uses the versioned gameplay prompt, not a stale inline one-click 
   assert.match(workflow, /node --test tests\/\*\.test\.mjs/);
 });
 
+test("uncertain affordability permits one enabled attempt rather than tooltip paralysis", () => {
+  assert.match(prompt, /rounded costs or missing detailed tooltips are not blockers/);
+  assert.match(prompt, /try it once even when affordability or a prerequisite is uncertain/);
+  assert.match(prompt, /Uncertain affordability alone is not an exhaustion reason/);
+  assert.match(prompt, /Do not probe disabled controls/);
+  assert.match(prompt, /unclear premium\/payment costs, target, quantity, or destructive effects do not/);
+  assert.doesNotMatch(prompt, /not guesses based on rounded abbreviations|Skip any action whose costs/);
+});
+
 test("multi-action loop requires category coverage and rejects first-building bias", () => {
   for (const requirement of [
     /without a fixed action-count limit/,
